@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Neural Net Playground</title>
+  <meta name="description" content="A small multilayer perceptron training live in your browser on 2-D classification data, with backprop written from scratch.">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <div>
+        <h1>Neural Net Playground</h1>
+        <p class="subtitle">A multilayer perceptron trained live in your browser, with forward pass and backprop written from scratch.</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap layout" id="app">
+    <!-- Controls -->
+    <aside class="sidebar" aria-label="Controls">
+      <section class="panel">
+        <h2>Presets</h2>
+        <div class="preset-list" id="presetList"></div>
+        <p class="preset-desc" id="presetDesc">Pick a preset to load a dataset, an architecture and hyperparameters.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Data</h2>
+        <label class="field">
+          <span class="field-label">Dataset</span>
+          <select id="dataset"></select>
+        </label>
+        <label class="field">
+          <span class="field-label">Noise <output id="noiseOut"></output></span>
+          <input type="range" id="noise" min="0" max="100" step="5">
+        </label>
+        <label class="field">
+          <span class="field-label">Training fraction <output id="splitOut"></output></span>
+          <input type="range" id="split" min="10" max="90" step="5">
+        </label>
+        <button type="button" class="btn btn-ghost" id="regen">Regenerate data</button>
+      </section>
+
+      <section class="panel">
+        <h2>Network</h2>
+        <div class="field">
+          <span class="field-label">Hidden layers <output id="layersOut"></output></span>
+          <div class="stepper">
+            <button type="button" class="btn btn-icon" id="layersDec" aria-label="Remove layer">−</button>
+            <button type="button" class="btn btn-icon" id="layersInc" aria-label="Add layer">+</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">Neurons per layer</span>
+          <div class="layer-steppers" id="layerSteppers"></div>
+        </div>
+        <label class="field">
+          <span class="field-label">Activation</span>
+          <select id="activation">
+            <option value="tanh">tanh</option>
+            <option value="relu">ReLU</option>
+            <option value="sigmoid">sigmoid</option>
+            <option value="leaky_relu">leaky ReLU (α = 0.01)</option>
+          </select>
+        </label>
+        <p class="hint">Output: one sigmoid unit, binary cross-entropy loss.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Training</h2>
+        <label class="field">
+          <span class="field-label">Optimizer</span>
+          <select id="optimizer">
+            <option value="sgd">SGD</option>
+            <option value="momentum">SGD + momentum (μ = 0.9)</option>
+            <option value="adam">Adam</option>
+          </select>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="compareSGD">
+          <span>Also train plain SGD from the same init (faint line)</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Learning rate η <output id="lrOut"></output></span>
+          <input type="range" id="lr" min="0" max="1000" step="1">
+        </label>
+        <label class="field">
+          <span class="field-label">L2 strength λ <output id="l2Out"></output></span>
+          <input type="range" id="l2" min="0" max="9" step="1">
+        </label>
+        <label class="field">
+          <span class="field-label">Batch size <output id="batchOut"></output></span>
+          <input type="range" id="batch" min="0" max="8" step="1">
+        </label>
+      </section>
+    </aside>
+
+    <!-- Main canvas -->
+    <section class="center" aria-label="Decision boundary">
+      <div class="toolbar">
+        <div class="toolbar-group">
+          <button type="button" class="btn btn-primary" id="play" aria-label="Play">Play</button>
+          <button type="button" class="btn" id="step">Step epoch</button>
+          <button type="button" class="btn" id="reset">Reset weights</button>
+        </div>
+        <label class="speed">
+          <span>Speed <output id="speedOut"></output></span>
+          <input type="range" id="speed" min="0" max="8" step="1">
+        </label>
+      </div>
+
+      <div class="readouts" id="readouts">
+        <div class="readout"><span class="r-label">Epoch</span><span class="r-value" id="rEpoch">0</span></div>
+        <div class="readout"><span class="r-label">Train loss</span><span class="r-value" id="rTrainLoss">–</span></div>
+        <div class="readout"><span class="r-label">Test loss</span><span class="r-value" id="rTestLoss">–</span></div>
+        <div class="readout"><span class="r-label">Train acc</span><span class="r-value" id="rTrainAcc">–</span></div>
+        <div class="readout"><span class="r-label">Test acc</span><span class="r-value" id="rTestAcc">–</span></div>
+      </div>
+
+      <aside class="watch" id="watch" aria-live="polite" hidden>
+        <div class="watch-head">
+          <span class="watch-label">What to watch</span>
+          <span class="watch-tag" id="watchTag" hidden></span>
+          <span class="watch-preset" id="watchPreset"></span>
+          <button type="button" class="watch-close" id="watchClose" aria-label="Dismiss note">×</button>
+        </div>
+        <p class="watch-text" id="watchText"></p>
+        <div class="watch-try" id="watchTry"></div>
+      </aside>
+
+      <div class="canvas-box square">
+        <canvas id="boundary" aria-label="Output probability over the input plane with data points"></canvas>
+        <div class="status-badge" id="status" hidden></div>
+      </div>
+
+      <div class="canvas-footer">
+        <div class="legend">
+          <span class="lg"><i class="dot c0"></i>class 0</span>
+          <span class="lg"><i class="dot c1"></i>class 1</span>
+          <span class="lg"><i class="dot hollow"></i>test point</span>
+          <span class="lg colorbar"><span>p = 0</span><i class="bar"></i><span>1</span></span>
+        </div>
+        <div class="toggles">
+          <label class="check"><input type="checkbox" id="showTest" checked><span>Test points</span></label>
+          <label class="check"><input type="checkbox" id="discretize"><span>Discretize</span></label>
+        </div>
+      </div>
+      <p class="meta" id="meta"></p>
+    </section>
+
+    <!-- Network + plots -->
+    <section class="right" aria-label="Network and training curves">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Network</h2>
+          <span class="hint" id="netInfo"></span>
+        </div>
+        <div class="canvas-box net-box"><canvas id="network" aria-label="Network diagram"></canvas></div>
+        <p class="hint">Edges: <span class="sw pos"></span> positive, <span class="sw neg"></span> negative weight, width ∝ |w|. Each tile shows that unit's activation over the input plane.</p>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Loss</h2>
+          <label class="check"><input type="checkbox" id="logLoss" checked><span>Log y</span></label>
+        </div>
+        <div class="canvas-box plot-box"><canvas id="lossPlot" aria-label="Loss versus epoch"></canvas></div>
+        <div class="legend small" id="lossLegend"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Gradient norm per layer</h2>
+          <span class="hint">‖∂J/∂W⁽ˡ⁾‖<sub>F</sub>, mean over minibatches, log y</span>
+        </div>
+        <div class="canvas-box plot-box"><canvas id="gradPlot" aria-label="Gradient norm per layer versus epoch"></canvas></div>
+        <div class="legend small" id="gradLegend"></div>
+      </div>
+    </section>
+  </main>
+
+  <section class="wrap prose-grid">
+    <article class="panel prose" id="equations">
+      <h2>The math being run</h2>
+      <p>For a network with hidden layers <span class="tex" data-tex="l = 1,\dots,L-1"></span> and input <span class="tex" data-tex="a^{(0)} = x \in \mathbb{R}^2"></span>:</p>
+      <h3>Forward pass</h3>
+      <div class="tex-block" data-tex="z^{(l)} = W^{(l)} a^{(l-1)} + b^{(l)}, \qquad a^{(l)} = \sigma\!\left(z^{(l)}\right), \qquad \hat y = s\!\left(z^{(L)}\right) = \frac{1}{1+e^{-z^{(L)}}}"></div>
+      <div class="tex-block" id="eqAct"></div>
+      <h3>Loss: binary cross-entropy + L2</h3>
+      <div class="tex-block" data-tex="J(\theta) = -\frac{1}{|B|}\sum_{i \in B}\Big[y_i \log \hat y_i + (1-y_i)\log(1-\hat y_i)\Big] + \frac{\lambda}{2}\sum_{l=1}^{L}\big\lVert W^{(l)}\big\rVert_F^2"></div>
+      <p class="hint">Biases are not penalized. The readouts and loss plot show the data term only (mean BCE over the whole train or test set).</p>
+      <h3>Backpropagation</h3>
+      <div class="tex-block" data-tex="\delta^{(L)} = \frac{\partial \ell}{\partial z^{(L)}} = \hat y - y \qquad\text{(sigmoid + BCE)}"></div>
+      <div class="tex-block" data-tex="\delta^{(l)} = \left(W^{(l+1)}\right)^{\!\top} \delta^{(l+1)} \odot \sigma'\!\left(z^{(l)}\right)"></div>
+      <div class="tex-block" data-tex="\frac{\partial J}{\partial W^{(l)}} = \frac{1}{|B|}\sum_{i\in B} \delta_i^{(l)} \big(a_i^{(l-1)}\big)^{\!\top} + \lambda W^{(l)}, \qquad \frac{\partial J}{\partial b^{(l)}} = \frac{1}{|B|}\sum_{i\in B} \delta_i^{(l)}"></div>
+      <h3>Update rule: <span id="optName">Adam</span></h3>
+      <div id="eqOpt"></div>
+      <h3>Initialization</h3>
+      <div class="tex-block" id="eqInit"></div>
+    </article>
+
+    <article class="panel prose" id="explainer">
+      <h2>What is going on</h2>
+      <p>The network is a function <span class="tex" data-tex="f_\theta:\mathbb{R}^2\to(0,1)"></span> estimating <span class="tex" data-tex="P(y=1\mid x)"></span>. Each hidden unit computes an affine function of the previous layer followed by a fixed nonlinearity, so a first-layer unit is a soft step across a line in the plane. Later layers form nonlinear combinations of those features, and the tiles in the network diagram show exactly what each unit has learned to respond to. Training is gradient descent on the cross-entropy, which is the negative log-likelihood of a Bernoulli model, so the heatmap is a calibrated probability only to the extent that the model and data allow it.</p>
+      <p>Why depth helps on the spiral: a one-hidden-layer net with <span class="tex" data-tex="n"></span> tanh units is a weighted sum of <span class="tex" data-tex="n"></span> ridges, and the boundary it can draw with a handful of units is a few gently curved pieces. Composition is more economical: each layer folds and stretches the representation produced by the one before, and the number of linear regions of a ReLU net grows exponentially with depth but only polynomially with width. Two interleaved arms that wind almost twice around the origin need many such folds, which a stack of three or four small layers provides with far fewer parameters than a single wide layer.</p>
+      <p>The learning rate sets the step size relative to the curvature of the loss. Near a minimum with Hessian eigenvalue <span class="tex" data-tex="h"></span>, gradient descent contracts only if <span class="tex" data-tex="\eta < 2/h"></span>. Above that it overshoots and the loss oscillates or diverges. Too small and progress is slow, especially along flat directions. Momentum averages past gradients, which speeds travel along consistent directions and multiplies the effective step by roughly <span class="tex" data-tex="1/(1-\mu)"></span>. Adam divides each coordinate by a running RMS of its gradient, making steps roughly scale-invariant per parameter. That is why it copes well with badly scaled layers and flat starts. ReLU units have an extra failure mode: a large step can push a unit's pre-activation below zero for every input, after which its gradient is identically zero and it never recovers.</p>
+      <p>L2 regularization adds <span class="tex" data-tex="\tfrac{\lambda}{2}\lVert W\rVert^2"></span> to the objective, which shows up as weight decay <span class="tex" data-tex="W \leftarrow W - \eta\lambda W"></span> in SGD. Small weights keep tanh units in their near-linear range and bound the network's Lipschitz constant, so the boundary cannot bend sharply around individual noisy points. With few, noisy training samples and a large net, the unregularized model drives train loss toward zero by carving islands around outliers while test loss rises: that is overfitting. Penalizing weights trades a little training fit for a smoother, better-generalizing boundary. Note that L2 is implemented as part of the gradient, so with Adam it is the coupled L2 variant, not AdamW's decoupled decay.</p>
+    </article>
+  </section>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <span>Neural Net Playground: vanilla JavaScript, no tracking, nothing stored. Everything runs locally in your browser.</span>
+      <span>Equations rendered with <a href="https://katex.org" rel="noopener">KaTeX</a>.</span>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous" defer></script>
+  <script src="nn.js" defer></script>
+  <script src="datasets.js" defer></script>
+  <script src="presets.js" defer></script>
+  <script src="plots.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
